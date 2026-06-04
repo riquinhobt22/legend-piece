@@ -1,147 +1,219 @@
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
--- --- CONFIGURAÇÃO DE SERVIÇOS ROBLOX ---
+-- --- CONFIGURAÇÕES DE INFRAESTRUTURA ---
 local LocalPlayer = game:GetService("Players").LocalPlayer
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local LogService = game:GetService("LogService")
+local TweenService = game:GetService("TweenService")
 
--- --- CONTROLADORES MASTER ---
-local WalkSpeedEnabled, WalkSpeedValue = false, 16
-local InfiniteJumpEnabled = false
-local AutoFarmEnabled = false
-local AutoQuestEnabled = false
-local AutoAttackEnabled = false
-local AutoSkillEnabled = false
+-- --- ESTADOS MASTER (ON/OFF) ---
+local _G = {
+    AutoFarm = false,
+    AutoQuest = false,
+    AutoM1 = false,
+    AutoSkills = false,
+    HitboxMultiplier = false,
+    FruitTeleportLoop = false,
+    WalkSpeedEnabled = false
+}
 
+-- Valores de Configuração
 local SelectedEnemy = "Nenhum"
-local SelectedWeapon = ""
-local SelectedTeleportNPC = "Nenhum"
+local SelectedWeapon = "Nenhum"
+local SelectedNPC = "Nenhum"
+local HitboxSize = 20
+local WalkSpeedValue = 16
 
--- Tabelas de armazenamento do Scanner
-local NPC_Categories = { ["Combate / Bosses"] = {}, ["Missões (Givers)"] = {}, ["Lojas / Vendedores"] = {}, ["Outros NPCs"] = {} }
-local MapFruits = {}
+-- Tabelas de Armazenamento Dinâmico
+local DataBase = {
+    Enemies = {},
+    QuestGivers = {},
+    Shops = {},
+    MiscNPCs = {}
+}
 
--- --- FUNÇÃO DE TELEPORTE SEGURO ---
-local function SecureTeleport(targetCFrame)
-    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-        LocalPlayer.Character.HumanoidRootPart.CFrame = targetCFrame
-    end
-end
-
--- --- PARTE 1: O CÉREBRO - VARREDURA BRUTA DE INFRAESTRUTURA ---
-local function DeepScanGame()
-    for cat, _ in pairs(NPC_Categories) do NPC_Categories[cat] = {} end
+-- --- ENGINE 1: VARREDURA INTELIGENTE DE MAPA ---
+local function CoreMapScan()
+    -- Reseta tabelas para evitar duplicidade
+    for k, v in pairs(DataBase) do DataBase[k] = {} end
     
-    -- Varre absolutamente tudo no mapa físico
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj:IsA("Model") and obj:FindFirstChild("HumanoidRootPart") and obj.Name ~= LocalPlayer.Name then
-            local nameLow = string.lower(obj.Name)
-            local hum = obj:FindFirstChildOfClass("Humanoid")
+            local nameLower = string.lower(obj.Name)
+            local humanoid = obj:FindFirstChildOfClass("Humanoid")
             
-            if string.find(nameLow, "dealer") or string.find(nameLow, "seller") or string.find(nameLow, "shop") or string.find(nameLow, "vendedor") or string.find(nameLow, "gacha") or string.find(nameLow, "boat") then
-                if not table.find(NPC_Categories["Lojas / Vendedores"], obj.Name) then table.insert(NPC_Categories["Lojas / Vendedores"], obj.Name) end
-            elseif string.find(nameLow, "quest") or string.find(nameLow, "giver") or string.find(nameLow, "missao") then
-                if not table.find(NPC_Categories["Missões (Givers)"], obj.Name) then table.insert(NPC_Categories["Missões (Givers)"], obj.Name) end
-            elseif hum and hum.MaxHealth > 0 then
-                if not table.find(NPC_Categories["Combate / Bosses"], obj.Name) then table.insert(NPC_Categories["Combate / Bosses"], obj.Name) end
+            -- Classificação por Inteligência de Nome e Componentes
+            if string.find(nameLower, "dealer") or string.find(nameLower, "shop") or string.find(nameLower, "vendedor") or string.find(nameLower, "gacha") or string.find(nameLower, "boat") then
+                if not table.find(DataBase.Shops, obj.Name) then table.insert(DataBase.Shops, obj.Name) end
+            elseif string.find(nameLower, "quest") or string.find(nameLower, "giver") or string.find(nameLower, "missao") then
+                if not table.find(DataBase.QuestGivers, obj.Name) then table.insert(DataBase.QuestGivers, obj.Name) end
+            elseif humanoid and humanoid.MaxHealth > 0 then
+                if not table.find(DataBase.Enemies, obj.Name) then table.insert(DataBase.Enemies, obj.Name) end
             else
-                if not table.find(NPC_Categories["Outros NPCs"], obj.Name) then table.insert(NPC_Categories["Outros NPCs"], obj.Name) end
+                if not table.find(DataBase.MiscNPCs, obj.Name) then table.insert(DataBase.MiscNPCs, obj.Name) end
             end
         end
     end
-    for cat, lista in pairs(NPC_Categories) do if #lista == 0 then table.insert(NPC_Categories[cat], "Nenhum Detectado") end end
+    
+    -- Garante que o dropdown não quebre se o mapa estiver vazio
+    for k, v in pairs(DataBase) do if #v == 0 then table.insert(DataBase[k], "Nenhum Detectado") end end
 end
 
--- Captura o inventário
-local function GetWeapons()
-    local items = {}
-    if LocalPlayer:FindFirstChild("Backpack") then for _, t in ipairs(LocalPlayer.Backpack:GetChildren()) do table.insert(items, t.Name) end end
-    if LocalPlayer.Character then for _, t in ipairs(LocalPlayer.Character:GetChildren()) do if t:IsA("Tool") and not table.find(items, t.Name) then table.insert(items, t.Name) end end end
-    if #items == 0 then table.insert(items, "Nenhum item") end
-    return items
+-- Lista inventário atualizado
+local function GetInventoryTools()
+    local tools = {}
+    if LocalPlayer:FindFirstChild("Backpack") then
+        for _, t in ipairs(LocalPlayer.Backpack:GetChildren()) do table.insert(tools, t.Name) end
+    end
+    if LocalPlayer.Character then
+        for _, t in ipairs(LocalPlayer.Character:GetChildren()) do
+            if t:IsA("Tool") and not table.find(tools, t.Name) then table.insert(tools, t.Name) end
+        end
+    end
+    return #tools > 0 and tools or {"Nenhum equipado"}
 end
 
--- --- CRIAR INTERFACE RAYFIELD ---
+-- --- ENGINE 2: SISTEMA DE MOVIMENTAÇÃO E TWEEN ---
+local function SecureTween(targetCFrame)
+    if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then return end
+    local hrp = LocalPlayer.Character.HumanoidRootPart
+    local distance = (hrp.Position - targetCFrame.Position).Magnitude
+    local speed = 250 -- Velocidade segura para evitar Anti-Cheat
+    
+    local tweenInfo = TweenInfo.new(distance / speed, Enum.EasingStyle.Linear)
+    local tween = TweenService:Create(hrp, tweenInfo, {CFrame = targetCFrame})
+    tween:Play()
+    return tween
+end
+
+-- --- EXECUÇÃO DA INTERFACE ---
+CoreMapScan()
+
 local Window = Rayfield:CreateWindow({
-   Name = "Legend Piece Hub | V6 HACKER ENGINE",
-   LoadingTitle = "Iniciando Descompilador de Tráfego...",
-   LoadingSubtitle = "Modo Analisador Ativado",
+   Name = "Legend Piece Hub | V7 SUPREME ENGINE",
+   LoadingTitle = "Analisando Dados do Servidor...",
+   LoadingSubtitle = "Arquitetura Universal Ativada",
    Theme = "Default",
    ConfigurationSaving = { Enabled = false }
 })
 
-DeepScanGame()
+-- --- CRIAÇÃO DAS ABAS ---
+local TabFarm = Window:CreateTab("⚔️ Auto Farm & Combate", 4483362534)
+local TabTeleport = Window:CreateTab("📍 Auto Teleport NPC", 4370345144)
+local TabFruit = Window:CreateTab("🍎 Fruit Teleport", 4370345144)
+local TabPlayer = Window:CreateTab("⚙️ Configurações", 4483362458)
 
--- --- PARTE 2: A FERRAMENTA DE EXTRAÇÃO (DUMPER DE COMANDOS) ---
--- Esta função vai caçar os Remotes reais que o jogo usa para skills e quests
-local function DumpGameRemotes()
-    print("--- [INÍCIO DO DUMP DE COMANDOS DO JOGO] ---")
-    local foundCount = 0
-    
-    -- Busca no ReplicatedStorage (onde ficam os comandos centrais do jogo)
-    for _, v in ipairs(ReplicatedStorage:GetDescendants()) do
-        if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
-            print(string.format("Comando Central Encontrado: Nome: '%s' | Caminho: %s", v.Name, v:GetFullName()))
-            foundCount = foundCount + 1
-        end
-    end
-    
-    -- Busca na ferramenta que você está segurando na mão
-    if LocalPlayer.Character then
-        local tool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
-        if tool then
-            print("--- [Analisando sua Fruta/Arma Equipada: " .. tool.Name .. "] ---")
-            for _, sub in ipairs(tool:GetDescendants()) do
-                if sub:IsA("RemoteEvent") or sub:IsA("RemoteFunction") then
-                    print(string.format("Gatilho de Skill Detectado: Nome: '%s' | Tipo: %s", sub.Name, sub.ClassName))
-                    foundCount = foundCount + 1
+-- --- ABA 1: COMBATE E FARM ---
+TabFarm:CreateSection("Seleção de Alvos")
+local DropEnemy = TabFarm:CreateDropdown({ Name = "Selecione o Inimigo/Boss", Options = DataBase.Enemies, CurrentOption = {"Selecione"}, Callback = function(O) SelectedEnemy = O[1] end })
+local DropWeapon = TabFarm:CreateDropdown({ Name = "Equipar Arma ou Fruta", Options = GetInventoryTools(), CurrentOption = {"Selecione"}, Callback = function(O) SelectedWeapon = O[1] end })
+
+TabFarm:CreateButton({ 
+    Name = "🔄 Recarregar Dados do Jogo", 
+    Callback = function() 
+        CoreMapScan() 
+        DropEnemy:Refresh(DataBase.Enemies, true) 
+        DropWeapon:Refresh(GetInventoryTools(), true) 
+    end 
+})
+
+TabFarm:CreateSection("Customização de Ataque")
+TabFarm:CreateSlider({ Name = "Aumentar Hitbox (Alcance)", Range = {10, 60}, Increment = 1, CurrentValue = 20, Callback = function(v) HitboxSize = v end })
+
+TabFarm:CreateSection("Ativadores (On / Off)")
+TabFarm:CreateToggle({ Name = "Ativar Auto Farm (Trazer Mobs)", CurrentValue = false, Callback = function(v) _G.AutoFarm = v end })
+TabFarm:CreateToggle({ Name = "Ativar Auto Quest Correspondente", CurrentValue = false, Callback = function(v) _G.AutoQuest = v end })
+TabFarm:CreateToggle({ Name = "Ativar Auto Clicker M1", CurrentValue = false, Callback = function(v) _G.AutoM1 = v end })
+TabFarm:CreateToggle({ Name = "Ativar Auto Uso de Skills (Armas e Frutas)", CurrentValue = false, Callback = function(v) _G.AutoSkills = v end })
+
+
+-- --- ABA 2: TELEPORTE DE NPCS (ORGANIZADO) ---
+TabTeleport:CreateSection("Categorias de Destino")
+local DropGivers = TabTeleport:CreateDropdown({ Name = "NPCs de Missões (Givers)", Options = DataBase.QuestGivers, CurrentOption = {"Nenhum"}, Callback = function(O) SelectedNPC = O[1] end })
+local DropShops = TabTeleport:CreateDropdown({ Name = "Lojas / Gacha / Barcos", Options = DataBase.Shops, CurrentOption = {"Nenhum"}, Callback = function(O) SelectedNPC = O[1] end })
+local DropMisc = TabTeleport:CreateDropdown({ Name = "Outros NPCs do Mapa", Options = DataBase.MiscNPCs, CurrentOption = {"Nenhum"}, Callback = function(O) SelectedNPC = O[1] end })
+
+TabTeleport:CreateButton({
+    Name = "⚡ Executar Teleporte Instantâneo",
+    Callback = function()
+        if SelectedNPC ~= "Nenhum" and SelectedNPC ~= "Nenhum Detectado" then
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                if obj:IsA("Model") and obj.Name == SelectedNPC and obj:FindFirstChild("HumanoidRootPart") then
+                    SecureTween(obj.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3))
+                    break
                 end
             end
         end
     end
-    print("--- [FIM DO DUMP - TOTAL DE " .. foundCount .. " COMANDOS EXTRAÍDOS] ---")
-    
-    Rayfield:Notify({
-        Name = "Dump Concluído!",
-        Content = "Abra o Log do Roblox para ver todos os comandos reais do jogo.",
-        Duration = 5,
-    })
-end
+})
 
--- --- LOOPS DE NATIVOS ---
+
+-- --- ABA 3: FRUIT TELEPORT ---
+TabFruit:CreateSection("Coletor Automático de Frutas Spawadas")
+TabFruit:CreateToggle({
+    Name = "Loop Auto-Coletar Frutas do Chão (On/Off)",
+    CurrentValue = false,
+    Callback = function(v)
+        _G.FruitTeleportLoop = v
+    end
+})
+
+
+-- --- ABA 4: CONFIGURAÇÕES DO PERSONAGEM ---
+TabPlayer:CreateSection("Atributos")
+TabPlayer:CreateToggle({ Name = "Modificar Velocidade (On/Off)", CurrentValue = false, Callback = function(v) _G.WalkSpeedEnabled = v end })
+TabPlayer:CreateSlider({ Name = "Ajustar Velocidade", Range = {16, 150}, Increment = 1, CurrentValue = 16, Callback = function(v) WalkSpeedValue = v end })
+
+
+-- ==========================================
+-- --- LOOPS DE AUTOMAÇÃO CRÍTICOS (BACKGROUND) ---
+-- ==========================================
+
+-- Loop de Movimentação Humana (Speed)
 RunService.RenderStepped:Connect(function()
-    if WalkSpeedEnabled and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+    if _G.WalkSpeedEnabled and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
         LocalPlayer.Character.Humanoid.WalkSpeed = WalkSpeedValue
     end
 end)
 
--- Auto Clicker M1 Forçado
+-- Auto Equipar Arma/Fruta selecionada
 task.spawn(function()
-    while task.wait(0.1) do
-        if AutoAttackEnabled and LocalPlayer.Character then
-            local tool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
-            if tool then 
-                tool:Activate() 
-                -- Força o disparo em qualquer remote dentro da arma
-                for _, r in ipairs(tool:GetDescendants()) do
-                    if r:IsA("RemoteEvent") then r:FireServer() r:FireServer("Attack") end
+    while task.wait(0.5) do
+        if _G.AutoFarm and SelectedWeapon ~= "Nenhum" and SelectedWeapon ~= "Nenhum equipado" then
+            if LocalPlayer:FindFirstChild("Backpack") and LocalPlayer.Backpack:FindFirstChild(SelectedWeapon) then
+                LocalPlayer.Backpack:FindFirstChild(SelectedWeapon).Parent = LocalPlayer.Character
+            end
+        end
+    end
+end)
+
+-- Multiplicador Quântico de Hitbox (Faz os ataques corporais e skills acertarem)
+task.spawn(function()
+    while task.wait(0.3) do
+        if _G.AutoFarm and SelectedEnemy ~= "Nenhum" then
+            for _, mob in ipairs(workspace:GetDescendants()) do
+                if mob:IsA("Model") and mob.Name == SelectedEnemy and mob:FindFirstChild("HumanoidRootPart") then
+                    local root = mob.HumanoidRootPart
+                    root.Size = Vector3.new(HitboxSize, HitboxSize, HitboxSize)
+                    root.Transparency = 0.75
+                    root.CanCollide = false
                 end
             end
         end
     end
 end)
 
--- Auto Skill Forçado
+-- Puxador de Mobs (Agrupa os monstros na sua frente para otimizar o farm)
 task.spawn(function()
-    while task.wait(0.5) do
-        if AutoSkillEnabled and LocalPlayer.Character then
-            local tool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
-            if tool then
-                local keys = {"Z", "X", "C", "V", "Skill1", "Skill2"}
-                for _, r in ipairs(tool:GetDescendants()) do
-                    if r:IsA("RemoteEvent") then
-                        for _, k in ipairs(keys) do pcall(function() r:FireServer(k) r:FireServer("Skill", k) end) end
+    while task.wait(0.2) do
+        if _G.AutoFarm and SelectedEnemy ~= "Nenhum" and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            local pRoot = LocalPlayer.Character.HumanoidRootPart
+            for _, mob in ipairs(workspace:GetDescendants()) do
+                if mob:IsA("Model") and mob.Name == SelectedEnemy and mob:FindFirstChild("HumanoidRootPart") then
+                    local mHum = mob:FindFirstChildOfClass("Humanoid")
+                    if mHum and mHum.Health > 0 then
+                        mob.HumanoidRootPart.CFrame = pRoot.CFrame * CFrame.new(0, 0, -5)
+                        mob.HumanoidRootPart.Velocity = Vector3.new(0,0,0)
                     end
                 end
             end
@@ -149,51 +221,86 @@ task.spawn(function()
     end
 end)
 
-
--- --- CONSTRUÇÃO DAS ABAS ---
-local TabFarm = Window:CreateTab("Auto Farm", 4483362534)
-local TabTeleport = Window:CreateTab("Auto Teleport NPC", 4370345144)
-local TabDumper = Window:CreateTab("🛠️ ANALISAR JOGO (F9)", 4483364419) -- NOVA ABA SCOUTER
-local TabPlayer = Window:CreateTab("Config", 4483362458)
-
--- --- ABA FARM ---
-TabFarm:CreateSection("Alvos")
-local EnemyDropdown = TabFarm:CreateDropdown({ Name = "Monstro/Boss", Options = NPC_Categories["Combate / Bosses"], CurrentOption = {"Selecione"}, MultipleOptions = false, Callback = function(O) SelectedEnemy = O[1] end })
-local WeaponDropdown = TabFarm:CreateDropdown({ Name = "Sua Arma/Fruta", Options = GetWeapons(), CurrentOption = {"Selecione"}, MultipleOptions = false, Callback = function(O) SelectedWeapon = O[1] end })
-TabFarm:CreateButton({ Name = "🔄 Atualizar Listas", Callback = function() DeepScanGame() EnemyDropdown:Refresh(NPC_Categories["Combate / Bosses"], true) WeaponDropdown:Refresh(GetWeapons(), true) end })
-
-TabFarm:CreateSection("Controles (ON/OFF)")
-TabFarm:CreateToggle({ Name = "Auto Clicker M1", CurrentValue = false, Callback = function(v) AutoAttackEnabled = v end })
-TabFarm:CreateToggle({ Name = "Auto Skill (Fruta/Arma)", CurrentValue = false, Callback = function(v) AutoSkillEnabled = v end })
-
--- --- ABA TELEPORT ---
-TabTeleport:CreateSection("Selecione para onde ir")
-local DropGivers = TabTeleport:CreateDropdown({ Name = "Pegar Missão (Level)", Options = NPC_Categories["Missões (Givers)"], CurrentOption = {"Nenhum"}, MultipleOptions = false, Callback = function(O) SelectedTeleportNPC = O[1] end })
-local DropShops = TabTeleport:CreateDropdown({ Name = "Lojas / Vendedores / Gacha", Options = NPC_Categories["Lojas / Vendedores"], CurrentOption = {"Nenhum"}, MultipleOptions = false, Callback = function(O) SelectedTeleportNPC = O[1] end })
-TabTeleport:CreateButton({ Name = "⚡ Teleportar para o NPC Selecionado", Callback = function()
-    if SelectedTeleportNPC ~= "Nenhum" then
-        for _, o in ipairs(workspace:GetDescendants()) do
-            if o:IsA("Model") and o.Name == SelectedTeleportNPC and o:FindFirstChild("HumanoidRootPart") then SecureTeleport(o.HumanoidRootPart.CFrame) break end
+-- Clique M1 Automático Avançado
+task.spawn(function()
+    while task.wait(0.1) do
+        if _G.AutoM1 and LocalPlayer.Character then
+            local activeTool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
+            if activeTool then
+                activeTool:Activate()
+                -- Varre os canais internos da própria arma em busca do gatilho de ataque primário
+                for _, child in ipairs(activeTool:GetDescendants()) do
+                    if child:IsA("RemoteEvent") then
+                        child:FireServer()
+                        child:FireServer("Attack")
+                    end
+                end
+            end
         end
     end
-end })
+end)
 
--- --- NOVA ABA: O DESCOMPILADOR DO JOGO ---
-TabDumper:CreateSection("🔬 Engenharia Reversa (Descobrir Segredos do Jogo)")
-TabDumper:CreateParagraph({Title = "Como funciona?", Content = "Como o jogo roda em códigos ocultos, use os botões abaixo para forçar o jogo a revelar o nome exato dos comandos dele. Isso vai gerar uma lista perfeita para nós criarmos o bypass definitivo."})
-
-TabDumper:CreateButton({
-    Name = "📥 MAPEAR E EXTRAIR TODOS OS COMANDOS (DUMP)",
-    Callback = function()
-        DumpGameRemotes()
+-- Motor Decodificador de Skills (Varre e força o uso de habilidades de Frutas/Armas)
+task.spawn(function()
+    while task.wait(0.4) do
+        if _G.AutoSkills and LocalPlayer.Character then
+            local activeTool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
+            if activeTool then
+                -- Alfabeto de chaves padrão de jogos de One Piece no Roblox
+                local universalTriggers = {"Z", "X", "C", "V", "Q", "E"}
+                local mockPosition = LocalPlayer.Character.HumanoidRootPart.CFrame * CFrame.new(0, 0, -10)
+                
+                for _, remote in ipairs(activeTool:GetDescendants()) do
+                    if remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction") then
+                        for _, key in ipairs(universalTriggers) do
+                            pcall(function()
+                                if remote:IsA("RemoteEvent") then
+                                    remote:FireServer(key)
+                                    remote:FireServer(key, mockPosition.Position)
+                                    remote:FireServer("Skill", key)
+                                else
+                                    remote:InvokeServer(key)
+                                end
+                            end)
+                        end
+                    end
+                end
+            end
+        end
     end
-})
+end)
 
-TabDumper:CreateParagraph({Title = "⚠️ IMPORTANTE PARA VER O RESULTADO:", Content = "Após clicar no botão acima, você PRECISA abrir o console do Roblox para ver a mágica. No celular, digite exatamente '/console' no chat do jogo para abrir a tela preta com os logs!"})
+-- Auto Quest Inteligente
+task.spawn(function()
+    while task.wait(2) do
+        if _G.AutoQuest and SelectedEnemy ~= "Nenhum" then
+            -- Procura remotes globais de missões no sistema do jogo
+            for _, service in ipairs({ReplicatedStorage, game:GetService("HttpService")}) do
+                for _, obj in ipairs(service:GetDescendants()) do
+                    if obj:IsA("RemoteEvent") and (string.find(string.lower(obj.Name), "quest") or string.find(string.lower(obj.Name), "mission")) then
+                        pcall(function() obj:FireServer("AcceptQuest", SelectedEnemy) obj:FireServer(SelectedEnemy) end)
+                    end
+                end
+            end
+        end
+    end
+end)
 
-
--- --- ABA CONFIG ---
-TabPlayer:CreateToggle({ Name = "Modificar Velocidade", CurrentValue = false, Callback = function(v) WalkSpeedEnabled = v end })
-TabPlayer:CreateSlider({ Name = "Velocidade", Range = {16, 200}, Increment = 1, CurrentValue = 16, Callback = function(v) WalkSpeedValue = v end })
+-- Loop Caçador do Fruit Teleport
+task.spawn(function()
+    while task.wait(1) do
+        if _G.FruitTeleportLoop then
+            for _, item in ipairs(workspace:GetDescendants()) do
+                if item:IsA("Model") and (string.find(string.lower(item.Name), "fruit") or string.find(string.lower(item.Name), "fruta") or item:FindFirstChild("FruitCharacter")) then
+                    local part = item:FindFirstChildOfClass("BasePart") or item:FindFirstChild("Handle")
+                    if part then
+                        SecureTween(part.CFrame)
+                        break
+                    end
+                end
+            end
+        end
+    end
+end)
 
 Rayfield:LoadConfiguration()
